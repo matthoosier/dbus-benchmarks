@@ -1,11 +1,16 @@
 #include <arpa/inet.h>
 #include <errno.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <string>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/un.h>
-#include <string.h>
-#include <string>
+#include <unistd.h>
+
+#include "socket-util.h"
 
 int main (int argc, char* argv[])
 {
@@ -33,20 +38,63 @@ int main (int argc, char* argv[])
 
     gettimeofday(&before, NULL);
 
-    for (unsigned int i = 0; i < 5000; ++i) {
-        char message[] = "Hello";
-        uint32_t len = strlen(message);
+    char message[1024];
+    memset(message, 'a', sizeof(message) - 1);
+    message[sizeof(message) - 1] = '\0';
+
+    char* ptr_message = &message[0];
+
+    for (unsigned int i = 0; i < CALLS; ++i) {
+        uint32_t len = strlen(ptr_message);
         uint32_t len_buf = htonl(len);
 
-        write(client_fd, &len_buf, sizeof(len_buf));
-        write(client_fd, &message[0], len);
+        ssize_t n = write_full(client_fd, &len_buf, sizeof(len_buf));
 
-        read(client_fd, &len_buf, sizeof(len_buf));
+        if (n == 0) {
+            fprintf(stderr, "Server disconnected while sending message header\n");
+            exit(1);
+        }
+        else if (n < 0) {
+            fprintf(stderr, "Error while sending message header: %s\n", strerror(errno));
+            exit(1);
+        }
+
+        n = write_full(client_fd, &ptr_message[0], len);
+
+        if (n == 0) {
+            fprintf(stderr, "Server disconnected while sending message payload\n");
+            exit(1);
+        }
+        else if (n < 0) {
+            fprintf(stderr, "Error while sending message payload: %s\n", strerror(errno));
+            exit(1);
+        }
+
+        n = read_full(client_fd, &len_buf, sizeof(len_buf));
+
+        if (n < 0) {
+            fprintf(stderr, "Couldn't read reply header: %s\n", strerror(errno));
+            exit(1);
+        }
+        else if (n == 0) {
+            fprintf(stderr, "Server disconnected during header\n");
+            exit(1);
+        }
+
         len = ntohl(len_buf);
 
         char* buffer = new char[len + 1];
-        read(client_fd, &buffer[0], len);
+        n = read_full(client_fd, &buffer[0], len);
         buffer[len] = '\0';
+
+        if (n < 0) {
+            fprintf(stderr, "Couldn't read reply payload: %s\n", strerror(errno));
+            exit(1);
+        }
+        else if (n == 0) {
+            fprintf(stderr, "Server disconnected during payload\n");
+            exit(1);
+        }
 
         delete[] buffer;
     }

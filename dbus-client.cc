@@ -1,6 +1,7 @@
 #include <dbus/dbus.h>
 #include <stdio.h>
 #include <sys/time.h>
+#include <string.h>
 
 #include "dbus-strings.h"
 #include "dbus-util.h"
@@ -18,9 +19,17 @@ static void send_message (DBusConnection* conn, DBusError* error)
         abort();
     }
 
-    char const* sent_string = "A";
+    static bool inited = false;
+    static char sent_string[1024];
+    char* ptr_sent_string = &sent_string[0];
 
-    dbus_message_append_args(message, DBUS_TYPE_STRING, &sent_string, DBUS_TYPE_INVALID);
+    if (!inited) {
+        memset(sent_string, 'a', sizeof(sent_string) - 1);
+        sent_string[sizeof(sent_string) - 1] = '\0';
+        inited = true;
+    }
+
+    dbus_message_append_args(message, DBUS_TYPE_STRING, &ptr_sent_string, DBUS_TYPE_INVALID);
 
     DBusMessage* reply = dbus_connection_send_with_reply_and_block(conn, message, DBUS_TIMEOUT_INFINITE, error);
     enforce_error(error);
@@ -42,10 +51,15 @@ int main (int argc, char* argv[])
     DBusError error;
     dbus_error_init(&error);
 
-    DBusConnection* conn = dbus_bus_get(DBUS_BUS_SESSION, &error);
+    #if defined(__QNX__)
+        DBusConnection* conn = dbus_bus_get(DBUS_BUS_SYSTEM, &error);
+    #else
+        DBusConnection* conn = dbus_bus_get(DBUS_BUS_SESSION, &error);
+    #endif
+
     enforce_error(&error);
 
-    enum { CALLS = 30000 };
+    enum { CALLS = 5000 };
 
     struct timeval before, after;
     gettimeofday(&before, NULL);

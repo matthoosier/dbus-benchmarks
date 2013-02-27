@@ -11,6 +11,11 @@ def configure(conf):
 	conf.load('compiler_c compiler_cxx')
 	conf.check_cfg(package='dbus-1', args='--cflags --libs')
 
+	if 'linux' == conf.env.DEST_OS:
+		conf.env.append_value('LIB', 'pthread')
+	elif 'qnx' == conf.env.DEST_OS:
+		conf.env.append_value('LIB', 'socket')
+
 def build(bld):
 	bld.program(source='dbus-client.cc', uselib='DBUS-1', target='dbus-client')
 	bld.program(source='dbus-server.cc', uselib='DBUS-1', target='dbus-server')

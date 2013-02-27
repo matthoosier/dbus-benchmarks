@@ -1,12 +1,16 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <pthread.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
+#include <string>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include <unistd.h>
 
-#include <string>
+#include "socket-util.h"
 
 static void * thread_body (void * arg)
 {
@@ -17,7 +21,7 @@ static void * thread_body (void * arg)
     while (true)
     {
         uint32_t msg_char_cnt_buf;
-        int n = read(client_fd, &msg_char_cnt_buf, sizeof(msg_char_cnt_buf));
+        ssize_t n = read_full(client_fd, &msg_char_cnt_buf, sizeof(msg_char_cnt_buf));
 
         if (n == 0) {
             fprintf(stderr, "Client disconnected\n");
@@ -25,7 +29,7 @@ static void * thread_body (void * arg)
             return NULL;
         }
 
-        if (n != sizeof(msg_char_cnt_buf)) {
+        else if (n < 0) {
             fprintf(stderr, "Incomplete message header\n");
             close(client_fd);
             return NULL;
@@ -35,29 +39,25 @@ static void * thread_body (void * arg)
 
         char* buffer = new char[msg_char_cnt + 1];
 
-        for (int num_to_read = msg_char_cnt; num_to_read > 0; ) {
-            n = read(client_fd, &buffer[msg_char_cnt - num_to_read], num_to_read);
-            if (n == 0) {
-                fprintf(stderr, "Incomplete message payload\n");
-                close(client_fd);
-                delete[] buffer;
-                return NULL;
-            }
+        n = read_full(client_fd, &buffer[0], msg_char_cnt);
 
-            else if (n < 0) {
-                fprintf(stderr, "Error reading: %s\n", strerror(errno));
-                close(client_fd);
-                delete[] buffer;
-                return NULL;
-            }
-
-            num_to_read -= n;
+        if (n == 0) {
+            fprintf(stderr, "Client disconnected while reading payload\n");
+            close(client_fd);
+            delete[] buffer;
+            return NULL;
+        }
+        else if (n < 0) {
+            fprintf(stderr, "Error reading payload: %s\n", strerror(errno));
+            close(client_fd);
+            delete[] buffer;
+            return NULL;
         }
 
         buffer[msg_char_cnt] = '\0';
 
         msg_char_cnt_buf = htonl(msg_char_cnt);
-        n = write(client_fd, &msg_char_cnt_buf, sizeof(msg_char_cnt_buf));
+        n = write_full(client_fd, &msg_char_cnt_buf, sizeof(msg_char_cnt_buf));
 
         if (n == 0) {
             fprintf(stderr, "Client disconnected\n");
@@ -66,31 +66,27 @@ static void * thread_body (void * arg)
             return NULL;
         }
 
-        if (n != sizeof(msg_char_cnt_buf)) {
+        else if (n < 0) {
             fprintf(stderr, "Unable to write full message header\n");
             close(client_fd);
             delete[] buffer;
             return NULL;
         }
 
-        for (int num_to_write = msg_char_cnt; num_to_write > 0; ) {
-            n = write(client_fd, &buffer[msg_char_cnt - num_to_write], num_to_write);
+        n = write_full(client_fd, &buffer[0], msg_char_cnt);
 
-            if (n == 0) {
-                fprintf(stderr, "Incomplete message payload write\n");
-                close(client_fd);
-                delete[] buffer;
-                return NULL;
-            }
+        if (n == 0) {
+            fprintf(stderr, "Incomplete message payload write\n");
+            close(client_fd);
+            delete[] buffer;
+            return NULL;
+        }
 
-            else if (n < 0) {
-                fprintf(stderr, "Error writing: %s\n", strerror(errno));
-                close(client_fd);
-                delete[] buffer;
-                return NULL;
-            }
-
-            num_to_write -= n;
+        else if (n < 0) {
+            fprintf(stderr, "Error writing: %s\n", strerror(errno));
+            close(client_fd);
+            delete[] buffer;
+            return NULL;
         }
 
         delete[] buffer;
@@ -99,13 +95,14 @@ static void * thread_body (void * arg)
 
 int main (int argc, char* argv[])
 {
-    int listen_fd = socket(PF_UNIX, SOCK_STREAM, 0);
-
     std::string path(getenv("HOME"));
     path += "/socket-test";
 
     // Clean out any previous stale copy of the socket
     unlink(path.c_str());
+
+    int listen_fd = socket(PF_UNIX, SOCK_STREAM, 0);
+    printf("Got listening socket fd %d\n", listen_fd);
 
     struct sockaddr_un addr;
     size_t path_len;
@@ -131,12 +128,13 @@ int main (int argc, char* argv[])
         struct sockaddr client_addr;
         socklen_t client_addr_len;
 
-        printf("Waiting for client...\n");
+        printf("Waiting for client on fd %d...\n", listen_fd);
         int client_fd = accept(listen_fd, &client_addr, &client_addr_len);
 
         if (client_fd < 0) {
+            unlink(path.c_str());
             fprintf(stderr, "Couldn't accept(): %s\n", strerror(errno));
-            exit(1);
+            break;
         }
 
         int* arg = new int;

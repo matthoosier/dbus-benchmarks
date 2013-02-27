@@ -56,7 +56,12 @@ int main (int argc, char* argv[])
     DBusError error;
     dbus_error_init(&error);
 
-    DBusConnection* conn = dbus_bus_get(DBUS_BUS_SESSION, &error);
+    #if defined(__QNX__)
+        DBusConnection* conn = dbus_bus_get(DBUS_BUS_SYSTEM, &error);
+    #else
+        DBusConnection* conn = dbus_bus_get(DBUS_BUS_SESSION, &error);
+    #endif
+
     enforce_error(&error);
 
     int ret = dbus_bus_request_name(conn, ECHO_SERVICE_NAME, 0, &error);
